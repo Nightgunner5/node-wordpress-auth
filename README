@@ -1,11 +1,11 @@
 TO INSTALL:
 ===========
-    npm install mysql-native
+    npm install wordpress-auth
 
 TO USE:
 =======
 In your init:
-    var wp_auth = require('wp-auth').create( 'http://my-blog.example',
+    var wp_auth = require('wordpress-auth').create( 'http://my-blog.example',
                           'LOGGED_IN_KEY from wp-config.php',
                           'LOGGED_IN_SALT from wp-config.php',
                           'MySQL host',
