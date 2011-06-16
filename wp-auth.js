@@ -24,7 +24,7 @@ function WP_Auth( wpurl, logged_in_key, logged_in_salt,
 
 WP_Auth.prototype.checkAuth = function( req ) {
 	var self = this, data = null;
-	if( req.headers.cookie )
+	if ( req.headers.cookie )
 		req.headers.cookie.split( ';' ).forEach( function( cookie ) {
 			if ( cookie.split( '=' )[0].trim() == self.cookiename )
 				data = cookie.split( '=' )[1].trim().split( '%7C' );
@@ -83,6 +83,7 @@ WP_Auth.prototype.setUserMeta = function( id, key, value ) {
 
 	var sanitized_value;
 	switch ( typeof value ) {
+		case 'boolean':
 		case 'object':
 			sanitized_value = phpjs.serialize( value ).replace( /(\'|\\)/g, '\\$1' );
 			break;
