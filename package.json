@@ -1,0 +1,19 @@
+{
+  "author": "Nightgunner5 <nightgunner5@llamaslayers.net> (http://llamaslayers.net)",
+  "name": "wordpress-auth",
+  "description": "Authenticate users through node using WordPress cookies",
+  "version": "0.0.0",
+  "homepage": "https://github.com/Nightgunner5/node-wordpress-auth",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/Nightgunner5/node-wordpress-auth.git"
+  },
+  "engines": {
+    "node": ">=0.4"
+  },
+  "dependencies": {
+    "mysql-native": ">=0.4.3"
+  },
+  "devDependencies": {},
+  "main": "wp-auth"
+}
