@@ -1,23 +1,5 @@
-/* TO USE:
-  npm install mysql-native
-
-  var wp_auth = require('wp-auth').create( 'http://my-blog.example',
-                        'LOGGED_IN_KEY from wp-config.php',
-                        'LOGGED_IN_SALT from wp-config.php',
-                        'MySQL host',
-                        'MySQL username',
-                        'MySQL password',
-                        'MySQL database',
-                        'WordPress table prefix (eg. wp_)' );
-
-  When you get a HTTP request and you need to verify auth:
-  wp_auth.checkAuth( req ).on( 'auth', function( auth_is_valid, user_id ) {
-      auth_is_valid; // true if the user is logged in, false if they are not
-      user_id; // the ID number of the user or 0 if the user is not logged in
-  } );
-*/
-
-var crypto = require( 'crypto' );
+var crypto = require( 'crypto' ),
+	phpjs = require( './serialize' );
 
 function WP_Auth( wpurl, logged_in_key, logged_in_salt,
 				mysql_host, mysql_user, mysql_pass, mysql_db,
@@ -32,7 +14,12 @@ function WP_Auth( wpurl, logged_in_key, logged_in_salt,
 	this.table_prefix = wp_table_prefix;
 
 	this.known_hashes = {};
+	this.known_hashes_timeout = {};
 	this.meta_cache = {};
+	this.meta_cache_timeout = {};
+
+	// Default cache time: 5 minutes
+	this.timeout = 300000;
 }
 
 WP_Auth.prototype.checkAuth = function( req ) {
@@ -55,6 +42,14 @@ WP_Auth.prototype.checkAuth = function( req ) {
 };
 
 WP_Auth.prototype.getUserMeta = function( id, key, callback ) {
+	if ( !( id in this.meta_cache_timeout ) )
+		this.meta_cache_timeout[id] = {};
+
+	if ( key in this.meta_cache_timeout[id] && this.meta_cache_timeout[id][key] < +new Date ) {
+		delete this.meta_cache[id][key];
+		delete this.meta_cache_timeout[id][key];
+	}
+
 	if ( id in this.meta_cache && key in this.meta_cache[id] ) {
 		callback( this.meta_cache[id][key] );
 		return;
@@ -64,14 +59,51 @@ WP_Auth.prototype.getUserMeta = function( id, key, callback ) {
 	this.db.query( 'select meta_value from ' + this.table_prefix + 'usermeta where meta_key = \'' + key.replace( /(\'|\\)/g, '\\$1' ) + '\' and user_id = ' + parseInt( id ) ).on( 'row', function( data ) {
 		if ( !( id in self.meta_cache ) )
 			self.meta_cache[id] = {};
-		self.meta_cache[id][key] = data.meta_value;
+		try {
+			self.meta_cache[id][key] = phpjs.unserialize( data.meta_value );
+		} catch( ex ) {
+			self.meta_cache[id][key] = data.meta_value;
+		}
 	} ).on( 'end', function() {
 		if ( !( id in self.meta_cache ) )
 			self.meta_cache[id] = {};
 		if ( !( key in self.meta_cache[id] ) )
 			self.meta_cache[id][key] = null;
+		self.meta_cache_timeout[id][key] = +new Date + self.timeout;
 		callback( self.meta_cache[id][key] );
 	} );
+};
+
+WP_Auth.prototype.setUserMeta = function( id, key, value ) {
+	if ( !( id in this.meta_cache_timeout ) )
+		this.meta_cache_timeout[id] = {};
+
+	this.meta_cache[id][key] = value;
+	this.meta_cache_timeout[id][key] = +new Date + this.timeout;
+
+	var sanitized_value;
+	switch ( typeof value ) {
+		case 'object':
+			sanitized_value = phpjs.serialize( value ).replace( /(\'|\\)/g, '\\$1' );
+			break;
+		case 'number':
+			sanitized_value = Number.toString.call( value );
+			break;
+		case 'string':
+			try {
+				// If it's a serialized string, serialize it again so it comes back out of the database the same way.
+				sanitized_value = phpjs.serialize( phpjs.serialize( phpjs.unserialize( value ) ) ).replace( /(\'|\\)/g, '\\$1' );
+			} catch ( ex ) {
+				sanitized_value = value.replace( /(\'|\\)/g, '\\$1' );
+			}
+			break;
+		default:
+			throw new Error( 'Invalid data type: ' + typeof value );
+	}
+
+	var self = this;
+	this.db.query( 'delete from' + this.table_prefix + 'usermeta where meta_key = \'' + key.replace( /(\'|\\)/g, '\\$1' ) + '\' and user_id = ' + parseInt( id ) );
+	this.db.query( 'insert into' + this.table_prefix + 'usermeta (meta_key, user_id, meta_value) VALUES(\'' + key.replace( /(\'|\\)/g, '\\$1' ) + '\', ' + parseInt( id ) + ', \'' + sanitized_value + '\')' );
 };
 
 exports.create = function( wpurl, logged_in_key, logged_in_salt,
@@ -96,6 +128,11 @@ Invalid_Auth.prototype.on = function( key, callback ) {
 function Valid_Auth( data, auth ) {
 	var self = this, user_login = data[0], expiration = data[1], hash = data[2];
 
+	if ( user_login in auth.known_hashes_timeout && auth.known_hashes_timeout[user_login] < +new Date ) {
+		delete auth.known_hashes[user_login];
+		delete auth.known_hashes_timeout[user_login];
+	}
+
 	function parse( pass_frag, id ) {
 		var hmac1 = crypto.createHmac( 'md5', auth.salt );
 		hmac1.update( user_login + pass_frag + '|' + expiration );
@@ -117,9 +154,11 @@ function Valid_Auth( data, auth ) {
 	auth.db.query( 'select ID, user_pass from ' + auth.table_prefix + 'users where user_login = \'' + user_login.replace( /(\'|\\)/g, '\\$1' ) + '\'' ).on( 'row', function( data ) {
 		found = true;
 		auth.known_hashes[user_login] = {frag: data.user_pass.substr( 8, 4 ), id: data.ID};
+		auth.known_hashes_timeout[user_login] = +new Date + auth.timeout;
 	} ).on( 'end', function() {
 		if ( !found ) {
 			auth.known_hashes[user_login] = {frag: '__fail__', id: 0};
+			auth.known_hashes_timeout[user_login] = +new Date + auth.timeout;
 		}
 		parse( auth.known_hashes[user_login].frag, auth.known_hashes[user_login].id );
 	} );
