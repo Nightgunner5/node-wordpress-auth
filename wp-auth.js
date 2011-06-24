@@ -1,6 +1,25 @@
 var crypto = require( 'crypto' ),
 	phpjs = require( './serialize' );
 
+function sanitizeValue( value ) {
+	switch ( typeof value ) {
+		case 'boolean':
+		case 'object':
+			return phpjs.serialize( value ).replace( /(\'|\\)/g, '\\$1' );
+		case 'number':
+			return Number.toString.call( value );
+		case 'string':
+			try {
+				// If it's a serialized string, serialize it again so it comes back out of the database the same way.
+				return phpjs.serialize( phpjs.serialize( phpjs.unserialize( value ) ) ).replace( /(\'|\\)/g, '\\$1' );
+			} catch ( ex ) {
+				return value.replace( /(\'|\\)/g, '\\$1' );
+			}
+		default:
+			throw new Error( 'Invalid data type: ' + typeof value );
+	}
+}
+
 function WP_Auth( wpurl, logged_in_key, logged_in_salt,
 				mysql_host, mysql_user, mysql_pass, mysql_db,
 				wp_table_prefix ) {
@@ -56,7 +75,7 @@ WP_Auth.prototype.getUserMeta = function( id, key, callback ) {
 	}
 
 	var self = this;
-	this.db.query( 'select meta_value from ' + this.table_prefix + 'usermeta where meta_key = \'' + key.replace( /(\'|\\)/g, '\\$1' ) + '\' and user_id = ' + parseInt( id ) ).on( 'row', function( data ) {
+	this.db.query( 'select meta_value from ' + this.table_prefix + 'usermeta where meta_key = \'' + sanitizeValue( key ) + '\' and user_id = ' + parseInt( id ) ).on( 'row', function( data ) {
 		if ( !( id in self.meta_cache ) )
 			self.meta_cache[id] = {};
 		try {
@@ -81,30 +100,35 @@ WP_Auth.prototype.setUserMeta = function( id, key, value ) {
 	this.meta_cache[id][key] = value;
 	this.meta_cache_timeout[id][key] = +new Date + this.timeout;
 
-	var sanitized_value;
-	switch ( typeof value ) {
-		case 'boolean':
-		case 'object':
-			sanitized_value = phpjs.serialize( value ).replace( /(\'|\\)/g, '\\$1' );
-			break;
-		case 'number':
-			sanitized_value = Number.toString.call( value );
-			break;
-		case 'string':
-			try {
-				// If it's a serialized string, serialize it again so it comes back out of the database the same way.
-				sanitized_value = phpjs.serialize( phpjs.serialize( phpjs.unserialize( value ) ) ).replace( /(\'|\\)/g, '\\$1' );
-			} catch ( ex ) {
-				sanitized_value = value.replace( /(\'|\\)/g, '\\$1' );
-			}
-			break;
-		default:
-			throw new Error( 'Invalid data type: ' + typeof value );
-	}
+	var sanitized_value = sanitizeValue( value );
 
 	var self = this;
-	this.db.query( 'delete from' + this.table_prefix + 'usermeta where meta_key = \'' + key.replace( /(\'|\\)/g, '\\$1' ) + '\' and user_id = ' + parseInt( id ) );
-	this.db.query( 'insert into' + this.table_prefix + 'usermeta (meta_key, user_id, meta_value) VALUES(\'' + key.replace( /(\'|\\)/g, '\\$1' ) + '\', ' + parseInt( id ) + ', \'' + sanitized_value + '\')' );
+	this.db.query( 'delete from' + this.table_prefix + 'usermeta where meta_key = \'' + sanitizeValue( key ) + '\' and user_id = ' + parseInt( id ) );
+	this.db.query( 'insert into' + this.table_prefix + 'usermeta (meta_key, user_id, meta_value) VALUES(\'' + sanitizeValue( key ) + '\', ' + parseInt( id ) + ', \'' + sanitized_value + '\')' );
+};
+
+WP_Auth.prototype.reverseUserMeta = function( key, value, callback ) {
+	for ( var id in this.meta_cache ) {
+		if ( key in this.meta_cache[id] && this.meta_cache[id][key] == value ) {
+			callback( id );
+			return;
+		}
+	}
+
+	var id = null;
+
+	var self = this;
+	this.db.query( 'select user_id from ' + this.table_prefix + 'usermeta where meta_key = \'' + sanitizeValue( key ) + '\' and meta_value = \'' + sanitizeValue( key ) + '\'' ).on( 'row', function( data ) {
+		id = data.user_id;
+		if ( !( id in self.meta_cache ) )
+			self.meta_cache[id] = {};
+		if ( !( id in self.meta_cache_timeout ) )
+			self.meta_cache_timeout[id] = {};
+		self.meta_cache[id][key] = value;
+		self.meta_cache_timeout[id][key] = +new Date + this.timeout;
+	} ).on( 'end', function() {
+		callback( id );
+	} );
 };
 
 exports.create = function( wpurl, logged_in_key, logged_in_salt,

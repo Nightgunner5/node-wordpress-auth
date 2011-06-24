@@ -32,3 +32,11 @@ To get a usermeta value:
 To set a usermeta value:
 
     wp_auth.setUserMeta( user_id, 'meta_key (eg. occupation)', 'meta_value (eg. Eating spaghetti)' );
+
+To get a user_id from a usermeta value:
+
+    wp_auth.reverseUserMeta( 'meta_key (eg. occupation)', 'meta_value (eg. Eating spaghetti)', function( id ) {
+        // id is null if no user could be found with the given meta key value pair
+        // Otherwise, it is the ID of the user
+        // If multiple users matched, only one will be given
+    } );

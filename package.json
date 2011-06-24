@@ -2,7 +2,7 @@
   "author": "Nightgunner5 <nightgunner5@llamaslayers.net> (http://llamaslayers.net)",
   "name": "wordpress-auth",
   "description": "Authenticate users through node using WordPress cookies",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "homepage": "https://github.com/Nightgunner5/node-wordpress-auth",
   "repository": {
     "type": "git",
