@@ -152,6 +152,8 @@ Invalid_Auth.prototype.on = function( key, callback ) {
 
 function Valid_Auth( data, auth ) {
 	var self = this, user_login = data[0], expiration = data[1], hash = data[2];
+	
+	user_login = user_login.replace('%40', '@');
 
 	if ( user_login in auth.known_hashes_timeout && auth.known_hashes_timeout[user_login] < +new Date ) {
 		delete auth.known_hashes[user_login];
