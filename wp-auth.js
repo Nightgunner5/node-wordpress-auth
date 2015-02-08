@@ -49,13 +49,13 @@ WP_Auth.prototype.checkAuth = function( req ) {
 				data = cookie.split( '=' )[1].trim().split( '%7C' );
 		} );
 	else
-		return new Invalid_Auth();
+		return new Invalid_Auth("no cookie");
 
 	if ( !data )
-		return new Invalid_Auth();
+		return new Invalid_Auth("no data in cookie");
 
 	if ( parseInt( data[1] ) < new Date / 1000 )
-		return new Invalid_Auth();
+		return new Invalid_Auth("expired cookie");
 
 	return new Valid_Auth( data, this );
 };
@@ -131,6 +131,17 @@ WP_Auth.prototype.reverseUserMeta = function( key, value, callback ) {
 	} );
 };
 
+WP_Auth.prototype.getContributors = function( callback ) {
+	var self = this;
+    var users = [];
+	// this.db.query( 'select ID as user_id, user_login from ' + this.table_prefix + 'user' ).on( 'row', function( data ) {});
+	this.db.query( 'select user_id, user_login from ' + this.table_prefix + 'usermeta as meta left join ' + this.table_prefix + 'users as user on user.ID = meta.user_id where meta_key = \'wp_user_level\' and meta_value = \'1\'' ).on( 'row', function( data ) {
+        users.push( data );
+    }).on( 'end', function() {
+        callback( users );
+    });
+};
+
 exports.create = function( wpurl, logged_in_key, logged_in_salt,
 				mysql_host, mysql_user, mysql_pass, mysql_db,
 				wp_table_prefix ) {
@@ -139,19 +150,20 @@ exports.create = function( wpurl, logged_in_key, logged_in_salt,
 				wp_table_prefix );
 };
 
-function Invalid_Auth() {}
+function Invalid_Auth(err) { this.err = err; }
 Invalid_Auth.prototype.on = function( key, callback ) {
 	if ( key != 'auth' )
 		return this;
 	var self = this;
 	process.nextTick( function() {
-		callback.call( self, false, 0 );
+		callback.call( self, false, 0, self.err );
 	} );
 	return this;
 };
 
 function Valid_Auth( data, auth ) {
-	var self = this, user_login = data[0], expiration = data[1], hash = data[2];
+	var self = this, user_login = data[0], expiration = data[1], token = data[2], hash = data[3];
+	user_login = user_login.replace('%40', '@');
 
 	if ( user_login in auth.known_hashes_timeout && auth.known_hashes_timeout[user_login] < +new Date ) {
 		delete auth.known_hashes[user_login];
@@ -160,20 +172,25 @@ function Valid_Auth( data, auth ) {
 
 	function parse( pass_frag, id ) {
 		var hmac1 = crypto.createHmac( 'md5', auth.salt );
-		hmac1.update( user_login + pass_frag + '|' + expiration );
-		var hmac2 = crypto.createHmac( 'md5', hmac1.digest( 'hex' ) );
-		hmac2.update( user_login + '|' + expiration );
-		if ( hash == hmac2.digest( 'hex' ) ) {
+        var key = user_login + '|' + pass_frag + '|' + expiration + '|' + token;
+        hmac1.update(key);
+        var hkey = hmac1.digest('hex');
+        var hmac2 = crypto.createHmac('sha256', hkey);
+        hmac2.update(user_login + '|' + expiration + '|' + token);
+        var cookieHash = hmac2.digest('hex');
+		if ( hash == cookieHash ) {
 			self.emit( 'auth', true, id );
 		} else {
-			self.emit( 'auth', false, 0 );
+			self.emit( 'auth', false, 0, "invalid hash" );
 		}
 	}
 
-	if ( user_login in auth.known_hashes )
-		process.nextTick(function() {
+	if ( user_login in auth.known_hashes ) {
+		return process.nextTick(function() {
 			parse( auth.known_hashes[user_login].frag, auth.known_hashes[user_login].id );
 		} );
+    }
+
 
 	var found = false;
 	auth.db.query( 'select ID, user_pass from ' + auth.table_prefix + 'users where user_login = \'' + user_login.replace( /(\'|\\)/g, '\\$1' ) + '\'' ).on( 'row', function( data ) {
