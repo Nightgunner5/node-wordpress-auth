@@ -131,6 +131,17 @@ WP_Auth.prototype.reverseUserMeta = function( key, value, callback ) {
 	} );
 };
 
+WP_Auth.prototype.getContributors = function( callback ) {
+	var self = this;
+    var users = [];
+	// this.db.query( 'select ID as user_id, user_login from ' + this.table_prefix + 'user' ).on( 'row', function( data ) {});
+	this.db.query( 'select user_id, user_login from ' + this.table_prefix + 'usermeta as meta left join ' + this.table_prefix + 'users as user on user.ID = meta.user_id where meta_key = \'wp_user_level\' and meta_value = \'1\'' ).on( 'row', function( data ) {
+        users.push( data );
+    }).on( 'end', function() {
+        callback( users );
+    });
+};
+
 exports.create = function( wpurl, logged_in_key, logged_in_salt,
 				mysql_host, mysql_user, mysql_pass, mysql_db,
 				wp_table_prefix ) {
